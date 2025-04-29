@@ -4,10 +4,19 @@ import plotly.express as px
 from io import BytesIO
 
 # Funções auxiliares
+# Funções auxiliares
 def load_data():
-    gravimetria = pd.read_excel("/mnt/data/GRAVIMETRIA POR TIPO DE UNIDADE.xlsx")
-    fluxo = pd.read_excel("/mnt/data/PlanilhaFluxoCorrigida.xlsx")
-    return gravimetria, fluxo
+    st.sidebar.header("Upload dos Arquivos")
+    gravimetria_file = st.sidebar.file_uploader("Upload da Planilha de Gravimetria", type=["xlsx"])
+    fluxo_file = st.sidebar.file_uploader("Upload da Planilha de Fluxo", type=["xlsx"])
+
+    if gravimetria_file and fluxo_file:
+        gravimetria = pd.read_excel(gravimetria_file)
+        fluxo = pd.read_excel(fluxo_file)
+        return gravimetria, fluxo
+    else:
+        st.warning("Por favor, faça o upload das duas planilhas para continuar.")
+        st.stop()
 
 def calcular_composicao(gravimetria, fluxo):
     # Padronizar nomes
