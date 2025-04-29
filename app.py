@@ -34,7 +34,7 @@ COMPOSITE_MAPPING = {
 }
 
 FRACTIONS = list(COMPOSITE_MAPPING.keys())
-MERGE_KEY = 'Tipo de unidade, segundo o município informante'
+MERGE_KEY = 'Tipo de unidade, segundo o município informante, segundo o município informante'
 
 @st.cache_data
 def load_data(grav_file, fluxo_file):
@@ -57,7 +57,7 @@ def load_data(grav_file, fluxo_file):
         elif frac == 'Saúde' and 'Saude' in grav_df.columns:
             grav_df.rename(columns={'Saude': 'Saúde_peso'}, inplace=True)
 
-    # Merge pelo tipo de unidade
+    # Merge pelo Tipo de unidade, segundo o município informante
     merged = pd.merge(
         fluxo_df,
         grav_df,
@@ -87,7 +87,7 @@ def main():
         df = load_data(grav_file, fluxo_file)
         st.title("Volume de Resíduos Ajustado por Gravimetria")
 
-        nivel = st.selectbox("Nível de Visualização", ['Estadual', 'Municipal', 'Tipo de Unidade'])
+        nivel = st.selectbox("Nível de Visualização", ['Estadual', 'Municipal', 'Tipo de unidade, segundo o município informante, segundo o município informante'])
 
         if nivel == 'Estadual':
             agr = df.groupby('UF')['Volume Ajustado (t)'].sum().reset_index()
@@ -106,13 +106,13 @@ def main():
             )
             st.plotly_chart(fig)
 
-        else:  # Tipo de Unidade
+        else:  # Tipo de unidade, segundo o município informante, segundo o município informante
             agr = df.groupby(MERGE_KEY)['Volume Ajustado (t)'].sum().reset_index()
             fig = px.pie(
                 agr,
                 names=MERGE_KEY,
                 values='Volume Ajustado (t)',
-                title='Por Tipo de Unidade'
+                title='Por Tipo de unidade, segundo o município informante, segundo o município informante'
             )
             st.plotly_chart(fig)
 
