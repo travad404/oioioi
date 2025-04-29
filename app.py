@@ -2,70 +2,124 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-# Função para carregar os arquivos
-def carregar_dados():
-    st.sidebar.title("Upload das planilhas")
-    gravimetria_file = st.sidebar.file_uploader("Upload da Planilha de Gravimetria", type=["xlsx", "csv"])
-    residuos_file = st.sidebar.file_uploader("Upload da Planilha de Resíduos Municipais", type=["xlsx", "csv"])
-    
-    gravimetria_df = residuos_df = None
+# =============================
+# CONFIGURAÇÃO DE AMBIENTE
+# =============================
+# Requisitos (requirements.txt):
+#   streamlit
+#   pandas
+#   plotly
+#   openpyxl
 
-    if gravimetria_file:
-        gravimetria_df = pd.read_excel(gravimetria_file) if gravimetria_file.name.endswith('xlsx') else pd.read_csv(gravimetria_file)
+# Definição das categorias compostas e suas colunas originais
+COMPOSITE_MAPPING = {
+    'Dom+Pub': [
+        'Papel/Papelão', 'Plásticos', 'Vidros', 'Metais', 'Orgânicos',
+        'Podas Municipais e Domiciliares', 'Inertes', 'Dom+Pub'
+    ],
+    'Entulho': [
+        'Concreto', 'Argamassa', 'Tijolo', 'Madeira', 'Papel', 'Plástico',
+        'Metal', 'Material agregado', 'Terra bruta', 'Pedra',
+        'Caliça Retida', 'Caliça Peneirada', 'Cerâmica', 'Material orgânico e galhos',
+        'Entulho'
+    ],
+    'Saúde': [
+        'Valor energético p/Coprocessamento', 'Valor energético p/Inciner ação', 'Saude'
+    ],
+    'Podas': [
+        'Redução de peso seco com Dom + Pub', 'Redução de peso Líquido com Dom + Pub',
+        'Redução de peso seco com Podas', 'Redução de peso Líquido com Podas', 'Podas'
+    ],
+    'Outros': ['Outros']
+}
 
-    if residuos_file:
-        residuos_df = pd.read_excel(residuos_file) if residuos_file.name.endswith('xlsx') else pd.read_csv(residuos_file)
+FRACTIONS = list(COMPOSITE_MAPPING.keys())
+MERGE_KEY = 'Tipo de unidade, segundo o município informante'
 
-    return gravimetria_df, residuos_df
+@st.cache_data
+def load_data(grav_file, fluxo_file):
+    # Leitura e padronização de colunas
+    grav_df = pd.read_excel(grav_file)
+    fluxo_df = pd.read_excel(fluxo_file)
+    grav_df.columns = grav_df.columns.str.strip()
+    fluxo_df.columns = fluxo_df.columns.str.strip()
 
-# Função para calcular os volumes ajustados
-def calcular_volumes(gravimetria_df, residuos_df):
-    # Vamos assumir que ambas as tabelas têm colunas de identificação comuns:
-    # residuos_df: 'Município', 'Estado', 'Tipo de Unidade', 'Quantidade (t)'
-    # gravimetria_df: 'Tipo de Unidade', 'Peso de Ajuste'
-    
-    # Fazendo o merge
-    merged_df = pd.merge(residuos_df, gravimetria_df, on="Tipo de Unidade", how="left")
-    
-    # Aplicar o peso de ajuste
-    merged_df["Volume Ajustado (t)"] = merged_df["Quantidade (t)"] * merged_df["Peso de Ajuste"]
-    
-    return merged_df
+    # Calcula frações compostas a partir das colunas originais
+    for frac, cols in COMPOSITE_MAPPING.items():
+        valid = [c for c in cols if c in fluxo_df.columns]
+        fluxo_df[frac] = fluxo_df[valid].fillna(0).sum(axis=1)
 
-# Função para visualizar os dados
-def visualizar_dados(merged_df):
-    st.title("Análise de Resíduos com Gravimetria Ajustada")
-    
-    nivel = st.selectbox("Escolha o nível de visualização", ["Estadual", "Municipal", "Tipo de Unidade"])
-    
-    if nivel == "Estadual":
-        agrupado = merged_df.groupby("Estado")["Volume Ajustado (t)"].sum().reset_index()
-        fig = px.bar(agrupado, x="Estado", y="Volume Ajustado (t)", title="Volume Ajustado por Estado")
-        st.plotly_chart(fig)
-    
-    elif nivel == "Municipal":
-        estado_selecionado = st.selectbox("Selecione o Estado", merged_df["Estado"].unique())
-        filtrado = merged_df[merged_df["Estado"] == estado_selecionado]
-        agrupado = filtrado.groupby("Município")["Volume Ajustado (t)"].sum().reset_index()
-        fig = px.bar(agrupado, x="Município", y="Volume Ajustado (t)", title=f"Volume Ajustado nos Municípios de {estado_selecionado}")
-        st.plotly_chart(fig)
-    
-    elif nivel == "Tipo de Unidade":
-        agrupado = merged_df.groupby("Tipo de Unidade")["Volume Ajustado (t)"].sum().reset_index()
-        fig = px.pie(agrupado, names="Tipo de Unidade", values="Volume Ajustado (t)", title="Distribuição por Tipo de Unidade de Tratamento")
-        st.plotly_chart(fig)
-    
-    st.dataframe(merged_df)
+    # Renomeia colunas de peso na gravimetria para '{frac}_peso'
+    for frac in FRACTIONS:
+        if frac in grav_df.columns:
+            grav_df.rename(columns={frac: f"{frac}_peso"}, inplace=True)
+        # trata 'Saude' sem acento
+        elif frac == 'Saúde' and 'Saude' in grav_df.columns:
+            grav_df.rename(columns={'Saude': 'Saúde_peso'}, inplace=True)
 
-# Código principal
+    # Merge pelo tipo de unidade
+    merged = pd.merge(
+        fluxo_df,
+        grav_df,
+        on=MERGE_KEY,
+        how='left'
+    )
+
+    # Preenche pesos ausentes com 1
+    for frac in FRACTIONS:
+        peso_col = f"{frac}_peso"
+        merged[peso_col] = merged.get(peso_col, pd.Series(1.0, index=merged.index)).fillna(1.0)
+
+    # Cálculo do volume ajustado (soma ponderada)
+    merged['Volume Ajustado (t)'] = 0.0
+    for frac in FRACTIONS:
+        merged['Volume Ajustado (t)'] += merged[frac] * merged[f"{frac}_peso"]
+
+    return merged
+
+# Função principal do Streamlit
 def main():
-    gravimetria_df, residuos_df = carregar_dados()
+    st.sidebar.title("Upload das Planilhas")
+    grav_file = st.sidebar.file_uploader("Gravimetria (pesos)", type=['xlsx','csv'])
+    fluxo_file = st.sidebar.file_uploader("Fluxo Municipal (dados)", type=['xlsx','csv'])
 
-    if gravimetria_df is not None and residuos_df is not None:
-        merged_df = calcular_volumes(gravimetria_df, residuos_df)
-        visualizar_dados(merged_df)
+    if grav_file and fluxo_file:
+        df = load_data(grav_file, fluxo_file)
+        st.title("Volume de Resíduos Ajustado por Gravimetria")
+
+        nivel = st.selectbox("Nível de Visualização", ['Estadual', 'Municipal', 'Tipo de Unidade'])
+
+        if nivel == 'Estadual':
+            agr = df.groupby('UF')['Volume Ajustado (t)'].sum().reset_index()
+            fig = px.bar(agr, x='UF', y='Volume Ajustado (t)', title='Por Estado')
+            st.plotly_chart(fig)
+
+        elif nivel == 'Municipal':
+            estado_sel = st.selectbox('Selecione Estado', sorted(df['UF'].dropna().unique()))
+            filt = df[df['UF'] == estado_sel]
+            agr = filt.groupby('Município de origem dos resíduos')['Volume Ajustado (t)'].sum().reset_index()
+            fig = px.bar(
+                agr,
+                x='Município de origem dos resíduos',
+                y='Volume Ajustado (t)',
+                title=f'Municípios de {estado_sel}'
+            )
+            st.plotly_chart(fig)
+
+        else:  # Tipo de Unidade
+            agr = df.groupby(MERGE_KEY)['Volume Ajustado (t)'].sum().reset_index()
+            fig = px.pie(
+                agr,
+                names=MERGE_KEY,
+                values='Volume Ajustado (t)',
+                title='Por Tipo de Unidade'
+            )
+            st.plotly_chart(fig)
+
+        # Exibição da tabela completa
+        st.dataframe(df)
     else:
-        st.info("Por favor, faça o upload das duas planilhas para começar.")
+        st.info("Faça upload das duas planilhas para iniciar.")
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
