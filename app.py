@@ -16,30 +16,28 @@ def load_data():
         st.warning("Por favor, faça o upload das duas planilhas para continuar.")
         st.stop()
 
-# Função para calcular a composição
 def calcular_composicao(gravimetria, fluxo):
-    col_tipo_unidade = "Tipo de unidade, segundo o município informante"
+    gravimetria['Tipo de Unidade'] = gravimetria['Tipo de Unidade'].str.strip().str.lower()
+    fluxo['Tipo de unidade, segundo o município informante'] = fluxo['Tipo de unidade, segundo o município informante'].str.strip().str.lower()
 
-    # Normaliza os nomes para facilitar o merge
-    fluxo[col_tipo_unidade] = fluxo[col_tipo_unidade].str.strip().str.lower()
-    gravimetria[col_tipo_unidade] = gravimetria[col_tipo_unidade].str.strip().str.lower()
+    # encontra automaticamente a coluna de total
+    coluna_total = [col for col in fluxo.columns if "total" in col.lower()][0]
 
-    # Merge
+    # junta os dados com base no tipo de unidade
     fluxo_completo = fluxo.merge(
         gravimetria,
-        left_on=col_tipo_unidade,
-        right_on=col_tipo_unidade,
+        left_on='Tipo de unidade, segundo o município informante',
+        right_on='Tipo de Unidade',
         how='left'
     )
 
-    # Materiais (colunas que são frações)
-    materiais = gravimetria.columns.drop(col_tipo_unidade)
-
-    # Multiplica as frações pela quantidade total
+    # multiplica as frações pela quantidade total para estimar composição
+    materiais = [col for col in gravimetria.columns if col not in ['Tipo de Unidade']]
     for material in materiais:
-        fluxo_completo[material] = fluxo_completo[material] * fluxo_completo['Total']
+        fluxo_completo[material] = fluxo_completo[material] * fluxo_completo[coluna_total]
 
     return fluxo_completo, materiais
+
 
 # Função para exibir dados e gráficos
 def exibir_dados(fluxo_completo, materiais):
