@@ -1,116 +1,69 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
+import matplotlib.pyplot as plt
 
-# Função para carregar os dados
-def load_data():
-    st.sidebar.header("Upload dos Arquivos")
-    gravimetria_file = st.sidebar.file_uploader("Upload da Planilha de Gravimetria", type=["xlsx"])
-    fluxo_file = st.sidebar.file_uploader("Upload da Planilha de Fluxo", type=["xlsx"])
+st.set_page_config(layout="wide")
 
-    if gravimetria_file and fluxo_file:
-        gravimetria = pd.read_excel(gravimetria_file)
-        fluxo = pd.read_excel(fluxo_file)
-        return gravimetria, fluxo
+# Função para carregar arquivos manualmente
+@st.cache_data
+def load_data(gravimetria_path, fluxo_path):
+    gravimetria = pd.read_excel(gravimetria_path)
+    fluxo = pd.read_excel(fluxo_path)
+    return gravimetria, fluxo
+
+# Interface para uploads
+st.title("Análise de Resíduos por Tipo de Unidade e UF")
+grav_file = st.file_uploader("Carregar planilha de Gravimetria", type=["xlsx"])
+flux_file = st.file_uploader("Carregar planilha de Fluxo", type=["xlsx"])
+
+if grav_file and flux_file:
+    gravimetria, fluxo = load_data(grav_file, flux_file)
+
+    tipo_col = "Tipo de unidade, segundo o município informante"
+
+    # Padronização dos nomes
+    gravimetria[tipo_col] = gravimetria[tipo_col].str.strip()
+    fluxo[tipo_col] = fluxo[tipo_col].str.strip()
+
+    ufs = sorted(fluxo["UF"].dropna().unique())
+    tipos_unidade = sorted(fluxo[tipo_col].dropna().unique())
+
+    uf_sel = st.selectbox("Selecione a UF", ufs)
+    tipo_sel = st.selectbox("Selecione o Tipo de Unidade", tipos_unidade)
+
+    fluxo_filtrado = fluxo[(fluxo["UF"] == uf_sel) & (fluxo[tipo_col] == tipo_sel)]
+
+    if not fluxo_filtrado.empty:
+        total_por_unidade = fluxo_filtrado.groupby("Nome da unidade")["Total"].sum().reset_index()
+        grav_filtro = gravimetria[gravimetria[tipo_col] == tipo_sel]
+
+        if grav_filtro.empty:
+            st.error("Não há dados de gravimetria para esse tipo de unidade.")
+        else:
+            composicao = grav_filtro.iloc[0].drop(tipo_col)
+
+            materiais_validos = []
+            composicao_final = {}
+
+            for material, frac in composicao.items():
+                if isinstance(frac, (float, int)):
+                    valor_total = fluxo_filtrado["Total"].sum() * frac
+                    composicao_final[material] = valor_total
+                    materiais_validos.append(material)
+
+            df_resultado = pd.DataFrame({
+                "Material": list(composicao_final.keys()),
+                "Quantidade (t)": list(composicao_final.values())
+            }).sort_values("Quantidade (t)", ascending=False)
+
+            st.subheader("Tabela de Composição Estimada dos Resíduos")
+            st.dataframe(df_resultado, use_container_width=True)
+
+            st.subheader("Gráfico de Barras")
+            fig, ax = plt.subplots(figsize=(10, 5))
+            ax.barh(df_resultado["Material"], df_resultado["Quantidade (t)"], color="teal")
+            ax.invert_yaxis()
+            ax.set_xlabel("Toneladas")
+            st.pyplot(fig)
     else:
-        st.warning("Por favor, faça o upload das duas planilhas para continuar.")
-        st.stop()
-
-def calcular_composicao(gravimetria, fluxo):
-    gravimetria['Tipo de Unidade'] = gravimetria['Tipo de Unidade'].str.strip().str.lower()
-    fluxo['Tipo de unidade, segundo o município informante'] = fluxo['Tipo de unidade, segundo o município informante'].str.strip().str.lower()
-
-    # encontra automaticamente a coluna de total
-    coluna_total = [col for col in fluxo.columns if "total" in col.lower()][0]
-
-    # junta os dados com base no tipo de unidade
-    fluxo_completo = fluxo.merge(
-        gravimetria,
-        left_on='Tipo de unidade, segundo o município informante',
-        right_on='Tipo de Unidade',
-        how='left'
-    )
-
-    # multiplica as frações pela quantidade total para estimar composição
-    materiais = [col for col in gravimetria.columns if col not in ['Tipo de Unidade']]
-    for material in materiais:
-        fluxo_completo[material] = fluxo_completo[material] * fluxo_completo[coluna_total]
-
-    return fluxo_completo, materiais
-
-
-# Função para exibir dados e gráficos
-def exibir_dados(fluxo_completo, materiais):
-    st.sidebar.header("Filtros")
-
-    ufs = fluxo_completo['UF'].unique()
-    tipos_unidade = fluxo_completo['Tipo de unidade, segundo o município informante'].unique()
-
-    uf_selecionada = st.sidebar.selectbox("Selecione a UF", sorted(ufs))
-    tipo_unidade_selecionado = st.sidebar.selectbox("Selecione o Tipo de Unidade", sorted(tipos_unidade))
-
-    dados_filtrados = fluxo_completo[
-        (fluxo_completo['UF'] == uf_selecionada) &
-        (fluxo_completo['Tipo de unidade, segundo o município informante'] == tipo_unidade_selecionado)
-    ]
-
-    if dados_filtrados.empty:
-        st.warning("Nenhum dado encontrado para os filtros selecionados.")
-        return
-
-    st.subheader(f"Composição de Resíduos - {uf_selecionada} - {tipo_unidade_selecionado.upper()}")
-
-    # Somar os materiais
-    soma_materiais = dados_filtrados[materiais].sum()
-
-    # Mostrar tabela
-    st.write("Tabela de Composição (toneladas):")
-    st.dataframe(soma_materiais.to_frame(name="Toneladas").style.format({"Toneladas": "{:,.2f}"}))
-
-    # Gráfico de pizza
-    fig_pizza = px.pie(
-        names=soma_materiais.index,
-        values=soma_materiais.values,
-        title="Distribuição dos Materiais",
-    )
-    st.plotly_chart(fig_pizza)
-
-    # Gráfico de barras empilhadas
-    dados_melt = dados_filtrados.melt(
-        id_vars=['Nome da Unidade', 'UF'],
-        value_vars=materiais,
-        var_name='Material',
-        value_name='Toneladas'
-    )
-
-    fig_barras = px.bar(
-        dados_melt,
-        x="Nome da Unidade",
-        y="Toneladas",
-        color="Material",
-        title="Composição por Unidade",
-        barmode="stack"
-    )
-    st.plotly_chart(fig_barras)
-
-    # Download dos dados
-    csv = dados_filtrados.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        label="📥 Baixar dados filtrados (.csv)",
-        data=csv,
-        file_name=f"residuos_{uf_selecionada}_{tipo_unidade_selecionado}.csv",
-        mime='text/csv'
-    )
-
-# Função principal
-def main():
-    st.set_page_config(page_title="Análise de Resíduos", layout="wide")
-
-    st.title("📊 Análise de Composição de Resíduos por Unidade")
-
-    gravimetria, fluxo = load_data()
-    fluxo_completo, materiais = calcular_composicao(gravimetria, fluxo)
-    exibir_dados(fluxo_completo, materiais)
-
-if __name__ == "__main__":
-    main()
+        st.warning("Nenhuma unidade encontrada para os filtros selecionados.")
