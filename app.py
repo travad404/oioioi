@@ -37,7 +37,7 @@ def calcular_composicao(gravimetria, fluxo):
 
     # Multiplica as frações pela quantidade total
     for material in materiais:
-        fluxo_completo[material] = fluxo_completo[material] * fluxo_completo['Total (t)']
+        fluxo_completo[material] = fluxo_completo[material] * fluxo_completo['Total ']
 
     return fluxo_completo, materiais
 
